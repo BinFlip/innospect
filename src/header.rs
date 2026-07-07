@@ -784,20 +784,27 @@ impl SetupHeader {
 /// `version` and inserts each parsed value into `strings` / `ansi`.
 ///
 /// The on-disk shape evolves field-by-field across the entire 1.x..7.x
-/// history, so the order below mirrors innoextract's
-/// `setup/header.cpp::header::load` (the canonical port of
-/// `Shared.SetupEntFunc.pas`). Two structural quirks live inside this
-/// walker rather than the post-hoc field-list approach the prior
-/// implementation used:
+/// history. `SECompressedBlockRead` (`Shared.SetupEntFunc.pas`) serializes
+/// `TSetupHeader` by walking every `String` field first, then every
+/// `AnsiString` field — so the string table is always contiguous and the
+/// ansi blobs always trail it. Any `String` field added in a later release
+/// therefore reads *before* the ansi tail even when its version gate is
+/// higher; see the `CloseApplicationsFilterExcludes` note below. Three
+/// structural quirks live inside this walker rather than the post-hoc
+/// field-list approach the prior implementation used:
 ///
 /// 1. The four `AnsiString` fields (`LicenseText`, `InfoBefore`,
 ///    `InfoAfter`, `CompiledCodeText`) **moved** at 5.2.5. Pre-5.2.5
 ///    they are interleaved with the `String` fields (right after
 ///    `BaseFilename` for the three info blobs and right after
 ///    `DefaultUserInfoSerial` for the compiled-code blob); 5.2.5+
-///    moved them to the tail of the string table.
+///    moved them to the tail, after the whole string table.
 /// 2. `UninstallerSignature` is a `String` field that exists only in
 ///    the narrow 5.2.1..5.3.10 window — read past, not exposed.
+/// 3. The `String` fields added at 6.4.3+ (`CloseApplicationsFilterExcludes`,
+///    `SevenZipLibraryName`, `UsePrevious*`) come after the architecture
+///    expressions but still ahead of the ansi tail. innoextract's reference
+///    predates them, so this part is validated against `Shared.Struct.pas`.
 ///
 /// See `research-notes/12-format-evolution-audit.md` for the
 /// per-version field-set table and `research/src/setup/header.cpp:146-281`
@@ -913,22 +920,7 @@ fn read_header_strings_and_ansi(
             strings,
         )?;
     }
-    // 5.2.5+: license/info blobs at the tail of the string table.
-    if version.at_least(5, 2, 5) {
-        put_ansi(reader, HeaderAnsi::LicenseText, ansi)?;
-        put_ansi(reader, HeaderAnsi::InfoBeforeText, ansi)?;
-        put_ansi(reader, HeaderAnsi::InfoAfterText, ansi)?;
-    }
-    // 5.2.1..5.3.10: UninstallerSignature String — read past.
-    if version.at_least(5, 2, 1) && !version.at_least(5, 3, 10) {
-        let _ = read_setup_string(reader, version, "UninstallerSignature")?;
-    }
-    // 5.2.5+: compiled-code blob at the tail.
-    if version.at_least(5, 2, 5) {
-        put_ansi(reader, HeaderAnsi::CompiledCodeText, ansi)?;
-    }
-    // 6.4.3+: CloseApplicationsFilterExcludes (added at issrc commit
-    // `72756e57`).
+    // 6.4.3+: CloseApplicationsFilterExcludes (issrc commit `72756e57`).
     if version.at_least(6, 4, 3) {
         put_str(
             reader,
@@ -947,6 +939,25 @@ fn read_header_strings_and_ansi(
         put_str(reader, HeaderString::UsePreviousSetupType, strings)?;
         put_str(reader, HeaderString::UsePreviousTasks, strings)?;
         put_str(reader, HeaderString::UsePreviousUserInfo, strings)?;
+    }
+    // 5.2.5+: license/info blobs — the first three `AnsiString` fields,
+    // read after the entire string table (see note above).
+    if version.at_least(5, 2, 5) {
+        put_ansi(reader, HeaderAnsi::LicenseText, ansi)?;
+        put_ansi(reader, HeaderAnsi::InfoBeforeText, ansi)?;
+        put_ansi(reader, HeaderAnsi::InfoAfterText, ansi)?;
+    }
+    // 5.2.1..5.3.10: UninstallerSignature String — read past. This narrow
+    // legacy window predates the 5.2.5 tail move, so in that era the ansi
+    // blobs are interleaved and the signature lands between InfoAfter and
+    // CompiledCode; every version in the window is < 6.4.3, so the string
+    // fields added above never coexist with it.
+    if version.at_least(5, 2, 1) && !version.at_least(5, 3, 10) {
+        let _ = read_setup_string(reader, version, "UninstallerSignature")?;
+    }
+    // 5.2.5+: compiled-code blob — the fourth `AnsiString` field.
+    if version.at_least(5, 2, 5) {
+        put_ansi(reader, HeaderAnsi::CompiledCodeText, ansi)?;
     }
 
     Ok(())
@@ -2097,3 +2108,91 @@ const OPTIONS_V6_7: &[Option<HeaderOption>] = &[
     None,
     None,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::version::{Version, VersionFlags};
+
+    fn push_utf16(buf: &mut Vec<u8>, s: &str) {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let byte_len = (units.len() as u32).saturating_mul(2);
+        buf.extend_from_slice(&byte_len.to_le_bytes());
+        for u in units {
+            buf.extend_from_slice(&u.to_le_bytes());
+        }
+    }
+
+    fn push_ansi(buf: &mut Vec<u8>, bytes: &[u8]) {
+        buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(bytes);
+    }
+
+    fn version_6_4_3() -> Version {
+        Version {
+            a: 6,
+            b: 4,
+            c: 3,
+            d: 0,
+            flags: VersionFlags::UNICODE,
+            raw_marker: [0u8; 64],
+        }
+    }
+
+    /// Regression for GitHub #1: on a 6.4.3+ installer the `String` field
+    /// `CloseApplicationsFilterExcludes` must be read *before* the
+    /// license/info/compiled-code `AnsiString` tail, matching Inno's
+    /// all-strings-then-all-ansistrings serialization. When it was read
+    /// after the tail, a non-empty `CompiledCode` blob (present whenever the
+    /// script has a `[Code]` section) landed in the UTF-16 decode and failed
+    /// with "invalid UTF-16LE in CloseApplicationsFilterExcludes". The
+    /// synthetic sample installers have no `[Code]` section, so every tail
+    /// field is empty and the misordering stayed invisible to them — hence
+    /// this byte-level fixture with a deliberately non-empty, odd-length
+    /// compiled-code blob (odd length is never valid UTF-16, so a regression
+    /// re-surfaces as the exact original error rather than a silent shift).
+    #[test]
+    fn issue_1_close_applications_filter_excludes_precedes_ansi_tail() {
+        let version = version_6_4_3();
+
+        // The 32 `String` fields that precede `CloseApplicationsFilterExcludes`
+        // for a 6.4.3 Unicode (non-ISX) installer, all left empty.
+        let mut buf = Vec::new();
+        for _ in 0..32 {
+            push_utf16(&mut buf, "");
+        }
+        // Field 33: CloseApplicationsFilterExcludes — a real string.
+        push_utf16(&mut buf, "notepad.exe,calc.exe");
+        // AnsiString tail: License / InfoBefore / InfoAfter / CompiledCode.
+        push_ansi(&mut buf, b"LICENSE TEXT");
+        push_ansi(&mut buf, b"");
+        push_ansi(&mut buf, b"");
+        // Compiled Pascal-Script bytecode: arbitrary binary, odd length so
+        // that mis-decoding it as UTF-16 reproduces the reported failure.
+        let compiled = [0x01u8, 0x02, 0x03];
+        push_ansi(&mut buf, &compiled);
+
+        let mut reader = Reader::new(&buf);
+        let mut strings = HashMap::new();
+        let mut ansi = HashMap::new();
+        read_header_strings_and_ansi(&mut reader, &version, &mut strings, &mut ansi)
+            .expect("6.4.3 header with a [Code] section must parse (issue #1)");
+
+        assert_eq!(
+            strings
+                .get(&HeaderString::CloseApplicationsFilterExcludes)
+                .map(String::as_str),
+            Some("notepad.exe,calc.exe"),
+        );
+        assert_eq!(
+            ansi.get(&HeaderAnsi::LicenseText).map(Vec::as_slice),
+            Some(b"LICENSE TEXT".as_slice()),
+        );
+        assert_eq!(
+            ansi.get(&HeaderAnsi::CompiledCodeText).map(Vec::as_slice),
+            Some(compiled.as_slice()),
+        );
+        // Every byte consumed: strings and ansi tail line up exactly.
+        assert_eq!(reader.remaining(), 0);
+    }
+}

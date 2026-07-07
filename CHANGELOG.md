@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2026-07-06
 
+### Fixed
+
+- Header string-table parsing for Inno Setup 6.4.3+ installers that carry a
+  `[Code]` section (or non-empty license/info text) no longer fails with
+  `invalid UTF-16LE in CloseApplicationsFilterExcludes`. The `String` fields
+  added since 6.3.0 (`CloseApplicationsFilterExcludes`, `SevenZipLibraryName`,
+  `UsePrevious*`) are now read ahead of the `AnsiString` tail, matching
+  `TSetupHeader`'s all-strings-then-all-ansistrings serialization
+  (GitHub [#1](https://github.com/BinFlip/inno/issues/1)).
+
 ### Added
 
 - Codepage-aware string decoding via `LanguageCodepage::decode`: UTF-16LE for

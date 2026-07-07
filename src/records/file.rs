@@ -349,7 +349,7 @@ impl FileEntry {
             // Options with new Bitness fields"). 7.0.0.0..7.0.0.2 still
             // use the legacy fo32Bit / fo64Bit flag bits.
             let raw = reader.u8("File.Bitness")?;
-            (Bitness::decode(raw), raw)
+            (Bitness::from_raw(raw), raw)
         } else {
             (None, 0)
         };
@@ -398,21 +398,32 @@ fn decode_verification_kind(b: u8) -> Option<FileVerificationKind> {
     }
 }
 
+impl FileEntryType {
+    /// Resolves the persisted on-disk discriminant byte back to a
+    /// [`FileEntryType`], or [`None`] for an unknown value.
+    ///
+    /// Maps the full byte range regardless of format version, unlike the
+    /// version-gated decode applied at parse time: byte `2` (`RegSvrExe`) only
+    /// appears in pre-5.0.0 installers, but since the stored `file_type_raw`
+    /// was already validated against its own version when parsed, re-deriving
+    /// the label here needs no format version.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::UserFile),
+            1 => Some(Self::UninstExe),
+            2 => Some(Self::RegSvrExe),
+            _ => None,
+        }
+    }
+}
+
 fn decode_file_type(b: u8, version: &Version) -> Option<FileEntryType> {
-    if version.at_least(5, 0, 0) {
-        // Post-5.0.0 only has UserFile + UninstExe.
-        match b {
-            0 => Some(FileEntryType::UserFile),
-            1 => Some(FileEntryType::UninstExe),
-            _ => None,
-        }
-    } else {
-        match b {
-            0 => Some(FileEntryType::UserFile),
-            1 => Some(FileEntryType::UninstExe),
-            2 => Some(FileEntryType::RegSvrExe),
-            _ => None,
-        }
+    // Byte→variant mapping lives in `FileEntryType::from_raw`; this only
+    // applies the version gate: `RegSvrExe` (byte 2) was dropped in 5.0.0.
+    match FileEntryType::from_raw(b)? {
+        FileEntryType::RegSvrExe if version.at_least(5, 0, 0) => None,
+        kind => Some(kind),
     }
 }
 

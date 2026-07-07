@@ -67,6 +67,20 @@ impl LanguageCodepage {
         }
     }
 
+    /// Reconstructs a [`LanguageCodepage`] from a stored numeric codepage.
+    ///
+    /// The canonical UTF-16LE page (`1200`) maps to [`Self::Utf16Le`]; every
+    /// other positive codepage is treated as a legacy Windows ANSI page. Used
+    /// to re-derive the family [`label`](Self::label) from a persisted
+    /// `codepage_raw` without storing the derived text.
+    #[must_use]
+    pub fn from_raw(codepage: u32) -> Self {
+        match codepage {
+            1200 => Self::Utf16Le,
+            other => Self::Windows(other),
+        }
+    }
+
     /// Returns a stable label for this codepage family.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -76,6 +90,44 @@ impl LanguageCodepage {
             Self::Other(_) => "other",
         }
     }
+
+    /// Decodes `bytes` from this codepage into an owned [`String`].
+    ///
+    /// `Utf16Le` decodes little-endian UTF-16 (modern Unicode builds).
+    /// `Windows` / `Other` numeric codepages are decoded through the
+    /// matching Windows code page (cp1250..cp1258, cp932, …) via
+    /// `encoding_rs`; an unknown or unmappable codepage falls back to a
+    /// strict-then-lossy UTF-8 interpretation. Returns `None` only when the
+    /// input is not valid UTF-16 (odd byte length / unpaired surrogate);
+    /// the ANSI path always yields a value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use innospect::LanguageCodepage;
+    /// // "ñ" in cp1252 is the single byte 0xF1.
+    /// assert_eq!(LanguageCodepage::Windows(1252).decode(&[0xF1]).as_deref(), Some("ñ"));
+    /// ```
+    #[must_use]
+    pub fn decode(self, bytes: &[u8]) -> Option<String> {
+        match self {
+            Self::Utf16Le => decode_utf16le(bytes),
+            Self::Windows(codepage) | Self::Other(codepage) => Some(decode_ansi(bytes, codepage)),
+        }
+    }
+}
+
+/// Decodes `bytes` using the Windows ANSI code page `codepage`, falling back
+/// to strict-then-lossy UTF-8 when the code page is unknown to `encoding_rs`.
+fn decode_ansi(bytes: &[u8], codepage: u32) -> String {
+    if let Ok(cp) = u16::try_from(codepage)
+        && let Some(encoding) = codepage::to_encoding(cp)
+    {
+        let (decoded, _had_errors) = encoding.decode_without_bom_handling(bytes);
+        return decoded.into_owned();
+    }
+    String::from_utf8(bytes.to_vec())
+        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
 }
 
 impl core::fmt::Display for LanguageCodepage {
@@ -156,13 +208,13 @@ impl LanguageEntry {
     /// don't form valid Unicode.
     #[must_use]
     pub fn name_string(&self) -> Option<String> {
-        decode_with_codepage(&self.name, self.codepage)
+        self.codepage.decode(&self.name)
     }
 
     /// Convenience: returns [`Self::language_name`] decoded.
     #[must_use]
     pub fn language_name_string(&self) -> Option<String> {
-        decode_with_codepage(&self.language_name, self.codepage)
+        self.codepage.decode(&self.language_name)
     }
 }
 
@@ -326,19 +378,6 @@ fn read_legacy(reader: &mut Reader<'_>, version: &Version) -> Result<LanguageEnt
         copyright_font_size,
         right_to_left,
     })
-}
-
-fn decode_with_codepage(bytes: &[u8], codepage: LanguageCodepage) -> Option<String> {
-    match codepage {
-        LanguageCodepage::Utf16Le => decode_utf16le(bytes),
-        LanguageCodepage::Windows(_) | LanguageCodepage::Other(_) => {
-            // Best-effort: try strict UTF-8, fall through to lossy.
-            std::str::from_utf8(bytes)
-                .map(str::to_owned)
-                .ok()
-                .or_else(|| Some(String::from_utf8_lossy(bytes).into_owned()))
-        }
-    }
 }
 
 fn decode_utf16le(bytes: &[u8]) -> Option<String> {

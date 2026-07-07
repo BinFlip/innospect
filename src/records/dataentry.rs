@@ -227,7 +227,7 @@ impl DataEntry {
             (SignMode::NoSetting, 0)
         } else if version.at_least(6, 3, 0) {
             let raw = reader.u8("Data.SignMode")?;
-            (decode_sign_mode(raw).unwrap_or(SignMode::NoSetting), raw)
+            (SignMode::from_raw(raw).unwrap_or(SignMode::NoSetting), raw)
         } else if flags.contains(&DataFlag::SignOnce) {
             (SignMode::Once, 0)
         } else if flags.contains(&DataFlag::Sign) {
@@ -331,12 +331,18 @@ fn data_flag_table(version: &Version) -> Vec<DataFlag> {
     t
 }
 
-fn decode_sign_mode(b: u8) -> Option<SignMode> {
-    match b {
-        0 => Some(SignMode::NoSetting),
-        1 => Some(SignMode::Yes),
-        2 => Some(SignMode::Once),
-        3 => Some(SignMode::Check),
-        _ => None,
+impl SignMode {
+    /// Resolves the persisted on-disk discriminant byte back to a [`SignMode`],
+    /// or [`None`] for an unknown value. Inverse of the byte read during
+    /// parsing; used to re-derive the label from a stored `sign_mode_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::NoSetting),
+            1 => Some(Self::Yes),
+            2 => Some(Self::Once),
+            3 => Some(Self::Check),
+            _ => None,
+        }
     }
 }

@@ -99,9 +99,11 @@ stable_name_enum!(Bitness, {
 });
 
 impl Bitness {
-    /// Decodes a raw `TSetupEntryBitness` byte. Unknown values map
-    /// to `None`.
-    pub(crate) fn decode(b: u8) -> Option<Self> {
+    /// Decodes a raw `TSetupEntryBitness` byte, or [`None`] for an unknown
+    /// value. Used both during parsing and to re-derive the label from a
+    /// stored `bitness_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
         match b {
             0 => Some(Self::InstallDefault),
             1 => Some(Self::Bits32),

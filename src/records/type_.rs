@@ -100,7 +100,7 @@ impl TypeEntry {
 
         let (kind, kind_raw) = if version.at_least(4, 0, 3) {
             let raw = reader.u8("Type.Typ")?;
-            (decode_setup_type(raw), raw)
+            (SetupTypeKind::from_raw(raw), raw)
         } else {
             (Some(SetupTypeKind::User), 0)
         };
@@ -128,13 +128,19 @@ impl TypeEntry {
     }
 }
 
-fn decode_setup_type(b: u8) -> Option<SetupTypeKind> {
-    match b {
-        0 => Some(SetupTypeKind::User),
-        1 => Some(SetupTypeKind::DefaultFull),
-        2 => Some(SetupTypeKind::DefaultCompact),
-        3 => Some(SetupTypeKind::DefaultCustom),
-        _ => None,
+impl SetupTypeKind {
+    /// Resolves the persisted on-disk discriminant byte back to a
+    /// [`SetupTypeKind`], or [`None`] for an unknown value. Used to re-derive
+    /// the label from a stored `kind_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::User),
+            1 => Some(Self::DefaultFull),
+            2 => Some(Self::DefaultCompact),
+            3 => Some(Self::DefaultCustom),
+            _ => None,
+        }
     }
 }
 

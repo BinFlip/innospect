@@ -1099,7 +1099,7 @@ fn parse_tail(reader: &mut Reader<'_>, version: &Version) -> Result<HeaderTail, 
     if version.at_least(5, 5, 7) {
         let raw = reader.u8("WizardImageAlphaFormat")?;
         tail.wizard_image_alpha_format_raw = raw;
-        tail.wizard_image_alpha_format = decode_alpha_format(raw);
+        tail.wizard_image_alpha_format = ImageAlphaFormat::from_raw(raw);
     }
 
     // Wizard background colors. Declaration-order layout:
@@ -1196,7 +1196,7 @@ fn parse_tail(reader: &mut Reader<'_>, version: &Version) -> Result<HeaderTail, 
     if version.at_least(1, 3, 6) {
         let raw = reader.u8("DirExistsWarning")?;
         tail.dir_exists_warning_raw = raw;
-        tail.dir_exists_warning = decode_auto_no_yes(raw);
+        tail.dir_exists_warning = AutoNoYes::from_raw(raw);
     }
 
     // 3.0.0..3.0.3 has a u8 (auto-no-yes) for AlwaysRestart vs
@@ -1272,10 +1272,10 @@ fn parse_tail(reader: &mut Reader<'_>, version: &Version) -> Result<HeaderTail, 
     if version.at_least(5, 3, 3) {
         let raw = reader.u8("DisableDirPage")?;
         tail.disable_dir_page_raw = raw;
-        tail.disable_dir_page = decode_auto_no_yes(raw);
+        tail.disable_dir_page = AutoNoYes::from_raw(raw);
         let raw = reader.u8("DisableProgramGroupPage")?;
         tail.disable_program_group_page_raw = raw;
-        tail.disable_program_group_page = decode_auto_no_yes(raw);
+        tail.disable_program_group_page = AutoNoYes::from_raw(raw);
     }
 
     // 5.3.6+ UninstallDisplaySize (u32 until 5.5.0; u64 from 5.5.0).
@@ -1313,12 +1313,18 @@ fn decode_wizard_style(b: u8) -> Option<WizardStyle> {
     }
 }
 
-fn decode_alpha_format(b: u8) -> Option<ImageAlphaFormat> {
-    match b {
-        0 => Some(ImageAlphaFormat::Ignored),
-        1 => Some(ImageAlphaFormat::Defined),
-        2 => Some(ImageAlphaFormat::Premultiplied),
-        _ => None,
+impl ImageAlphaFormat {
+    /// Resolves the persisted on-disk discriminant byte back to an
+    /// [`ImageAlphaFormat`], or [`None`] for an unknown value. Used to
+    /// re-derive the label from a stored `wizard_image_alpha_format_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Ignored),
+            1 => Some(Self::Defined),
+            2 => Some(Self::Premultiplied),
+            _ => None,
+        }
     }
 }
 
@@ -1331,12 +1337,19 @@ fn decode_uninstall_log_mode(b: u8) -> Option<UninstallLogMode> {
     }
 }
 
-fn decode_auto_no_yes(b: u8) -> Option<AutoNoYes> {
-    match b {
-        0 => Some(AutoNoYes::Auto),
-        1 => Some(AutoNoYes::No),
-        2 => Some(AutoNoYes::Yes),
-        _ => None,
+impl AutoNoYes {
+    /// Resolves the persisted on-disk discriminant byte back to an
+    /// [`AutoNoYes`], or [`None`] for an unknown value. Used to re-derive the
+    /// label from a stored `disable_dir_page_raw` /
+    /// `disable_program_group_page_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Auto),
+            1 => Some(Self::No),
+            2 => Some(Self::Yes),
+            _ => None,
+        }
     }
 }
 

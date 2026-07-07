@@ -164,14 +164,14 @@ impl RunEntry {
         };
 
         let wait_raw = reader.u8("Run.Wait")?;
-        let wait = decode_wait(wait_raw);
+        let wait = RunWait::from_raw(wait_raw);
 
         // SetupBinVersion 7.0.0.3 (issrc commit `3553e3b7`) adds a
         // Bitness byte between `Wait` and `Options`. 7.0.0.0..7.0.0.2
         // still use the legacy `ro32Bit` / `ro64Bit` flag bits.
         let (bitness, bitness_raw) = if version.at_least_4(7, 0, 0, 3) {
             let raw = reader.u8("Run.Bitness")?;
-            (Bitness::decode(raw), raw)
+            (Bitness::from_raw(raw), raw)
         } else {
             (None, 0)
         };
@@ -201,12 +201,18 @@ impl RunEntry {
     }
 }
 
-fn decode_wait(b: u8) -> Option<RunWait> {
-    match b {
-        0 => Some(RunWait::UntilTerminated),
-        1 => Some(RunWait::NoWait),
-        2 => Some(RunWait::UntilIdle),
-        _ => None,
+impl RunWait {
+    /// Resolves the persisted on-disk discriminant byte back to a [`RunWait`],
+    /// or [`None`] for an unknown value. Used to re-derive the label from a
+    /// stored `wait_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::UntilTerminated),
+            1 => Some(Self::NoWait),
+            2 => Some(Self::UntilIdle),
+            _ => None,
+        }
     }
 }
 

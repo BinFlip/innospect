@@ -218,7 +218,7 @@ impl RegistryEntry {
         // Inno sets the high bit when the root key was determined at
         // compile time vs runtime; mask it off for the canonical hive.
         let hive_raw = raw_root & !0x8000_0000;
-        let hive = decode_hive(hive_raw);
+        let hive = RegistryHive::from_raw(hive_raw);
 
         let permission_index = if version.at_least(4, 1, 0) {
             reader
@@ -237,7 +237,7 @@ impl RegistryEntry {
         // bits.
         let (bitness, bitness_raw) = if version.at_least_4(7, 0, 0, 3) {
             let raw = reader.u8("Registry.Bitness")?;
-            (Bitness::decode(raw), raw)
+            (Bitness::from_raw(raw), raw)
         } else {
             (None, 0)
         };
@@ -266,41 +266,58 @@ impl RegistryEntry {
     }
 }
 
-fn decode_hive(raw: u32) -> RegistryHive {
-    match raw {
-        0 => RegistryHive::ClassesRoot,
-        1 => RegistryHive::CurrentUser,
-        2 => RegistryHive::LocalMachine,
-        3 => RegistryHive::Users,
-        4 => RegistryHive::PerformanceData,
-        5 => RegistryHive::CurrentConfig,
-        6 => RegistryHive::DynData,
-        n => RegistryHive::Unknown(n),
+impl RegistryHive {
+    /// Resolves the persisted raw hive number back to a [`RegistryHive`].
+    ///
+    /// Total (never fails): unrecognised numbers surface as
+    /// [`RegistryHive::Unknown`]. Public inverse of the internal hive decode,
+    /// used to re-derive the label from a stored `hive_raw`.
+    #[must_use]
+    pub fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::ClassesRoot,
+            1 => Self::CurrentUser,
+            2 => Self::LocalMachine,
+            3 => Self::Users,
+            4 => Self::PerformanceData,
+            5 => Self::CurrentConfig,
+            6 => Self::DynData,
+            n => Self::Unknown(n),
+        }
+    }
+}
+
+impl RegistryValueType {
+    /// Resolves the persisted on-disk discriminant byte back to a
+    /// [`RegistryValueType`], or [`None`] for an unknown value.
+    ///
+    /// Maps the full byte range regardless of format version, unlike the
+    /// version-gated decode applied at parse time: byte `6` (`QWord`) only
+    /// appears in 5.2.5+ installers, but since the stored `value_type_raw` was
+    /// already validated against its own version when parsed, re-deriving the
+    /// label here needs no format version.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::None),
+            1 => Some(Self::String),
+            2 => Some(Self::ExpandString),
+            3 => Some(Self::DWord),
+            4 => Some(Self::Binary),
+            5 => Some(Self::MultiString),
+            6 => Some(Self::QWord),
+            _ => None,
+        }
     }
 }
 
 fn decode_value_type(b: u8, version: &Version) -> Option<RegistryValueType> {
-    let table: &[RegistryValueType] = if version.at_least(5, 2, 5) {
-        &[
-            RegistryValueType::None,
-            RegistryValueType::String,
-            RegistryValueType::ExpandString,
-            RegistryValueType::DWord,
-            RegistryValueType::Binary,
-            RegistryValueType::MultiString,
-            RegistryValueType::QWord,
-        ]
-    } else {
-        &[
-            RegistryValueType::None,
-            RegistryValueType::String,
-            RegistryValueType::ExpandString,
-            RegistryValueType::DWord,
-            RegistryValueType::Binary,
-            RegistryValueType::MultiString,
-        ]
-    };
-    table.get(usize::from(b)).copied()
+    // Byte→variant mapping lives in `RegistryValueType::from_raw`; this only
+    // applies the version gate: `QWord` (byte 6) was added in 5.2.5.
+    match RegistryValueType::from_raw(b)? {
+        RegistryValueType::QWord if !version.at_least(5, 2, 5) => None,
+        kind => Some(kind),
+    }
 }
 
 fn format_le_u32(bytes: &[u8]) -> String {

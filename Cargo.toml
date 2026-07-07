@@ -1,6 +1,6 @@
 [package]
 name = "innospect"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Johann Kempter <admin@binflip.rs>"]
 rust-version = "1.88"
@@ -29,22 +29,19 @@ arithmetic_side_effects = "deny"
 indexing_slicing = "deny"
 
 [dependencies]
-bitflags = "2.11.1"
-goblin = "0.10.5"
-# Compression for setup-1 chunks (per-chunk dispatch in `extract::chunk`):
-# Stored / Zlib / LZMA1 / LZMA2 / BZip2.
+bitflags = "2.13.0"
+goblin = "0.10.7"
+encoding_rs = "0.8.35"
+codepage = "0.1.2"
 flate2 = "1.1.9"
 lzma-rs = "0.3.0"
 bzip2 = "0.6.1"
-# File-content checksums per `data_entry::DataChecksum`:
-# SHA-256 (6.4+), SHA-1 (5.3.9..6.4), MD5 (4.2..5.3.9). CRC32 + Adler32
-# are implemented in-crate (`util/checksum.rs`).
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 md-5 = "0.11.0"
 pbkdf2 = { version = "0.13.0", default-features = false }
 hmac = "0.13.0"
-chacha20 = { version = "0.10.0", features = ["xchacha"] }
+chacha20 = { version = "0.10.1", features = ["xchacha"] }
 pascalscript = "0.1.1"
 
 [dev-dependencies]

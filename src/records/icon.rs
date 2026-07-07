@@ -160,7 +160,7 @@ impl IconEntry {
 
         let (close_on_exit, close_on_exit_raw) = if version.at_least(1, 3, 15) {
             let raw = reader.u8("Icon.CloseOnExit")?;
-            (decode_close_on_exit(raw), raw)
+            (CloseOnExit::from_raw(raw), raw)
         } else {
             (None, 0)
         };
@@ -197,12 +197,18 @@ impl IconEntry {
     }
 }
 
-fn decode_close_on_exit(b: u8) -> Option<CloseOnExit> {
-    match b {
-        0 => Some(CloseOnExit::NoSetting),
-        1 => Some(CloseOnExit::Close),
-        2 => Some(CloseOnExit::DontClose),
-        _ => None,
+impl CloseOnExit {
+    /// Resolves the persisted on-disk discriminant byte back to a
+    /// [`CloseOnExit`], or [`None`] for an unknown value. Used to re-derive the
+    /// label from a stored `close_on_exit_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::NoSetting),
+            1 => Some(Self::Close),
+            2 => Some(Self::DontClose),
+            _ => None,
+        }
     }
 }
 

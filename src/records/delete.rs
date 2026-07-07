@@ -66,17 +66,23 @@ impl DeleteEntry {
         Ok(Self {
             name,
             item,
-            target_type: decode_delete_type(target_type_raw),
+            target_type: DeleteTargetType::from_raw(target_type_raw),
             target_type_raw,
         })
     }
 }
 
-fn decode_delete_type(b: u8) -> Option<DeleteTargetType> {
-    match b {
-        0 => Some(DeleteTargetType::Files),
-        1 => Some(DeleteTargetType::FilesAndSubdirs),
-        2 => Some(DeleteTargetType::DirIfEmpty),
-        _ => None,
+impl DeleteTargetType {
+    /// Resolves the persisted on-disk discriminant byte back to a
+    /// [`DeleteTargetType`], or [`None`] for an unknown value. Used to
+    /// re-derive the label from a stored `target_type_raw`.
+    #[must_use]
+    pub fn from_raw(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Files),
+            1 => Some(Self::FilesAndSubdirs),
+            2 => Some(Self::DirIfEmpty),
+            _ => None,
+        }
     }
 }
